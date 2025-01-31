@@ -59,33 +59,42 @@ Clarinet.test({
 });
 
 Clarinet.test({
-  name: "Ensure access control restrictions work correctly",
+  name: "Test time-limited access control",
   async fn(chain: Chain, accounts: Map<string, Account>) {
     const deployer = accounts.get('deployer')!;
     const user1 = accounts.get('wallet_1')!;
     
-    // User1 tries to access deployer's data without permission
+    // Grant access that expires in 10 blocks
+    const currentHeight = chain.blockHeight;
+    const expiryHeight = currentHeight + 10;
+    
     let block = chain.mineBlock([
-      Tx.contractCall('data-guard', 'get-user-data', [
-        types.principal(deployer.address)
-      ], user1.address)
+      Tx.contractCall('data-guard', 'grant-access-with-expiry', [
+        types.principal(user1.address),
+        types.some(types.uint(expiryHeight))
+      ], deployer.address)
     ]);
+    block.receipts[0].result.expectOk().expectBool(true);
     
-    // Should return empty list since no permission
-    const data = block.receipts[0].result.expectOk();
-    assertEquals(data, []);
-    
-    // Test double-granting access (should fail)
+    // Check access is granted
     block = chain.mineBlock([
-      Tx.contractCall('data-guard', 'grant-access', [
-        types.principal(user1.address)
-      ], deployer.address),
-      Tx.contractCall('data-guard', 'grant-access', [
+      Tx.contractCall('data-guard', 'check-access', [
+        types.principal(deployer.address),
         types.principal(user1.address)
       ], deployer.address)
     ]);
-    
     block.receipts[0].result.expectOk().expectBool(true);
-    block.receipts[1].result.expectErr().expectUint(101); // err-already-granted
+    
+    // Mine 11 blocks to exceed expiry
+    chain.mineEmptyBlockUntil(expiryHeight + 1);
+    
+    // Check access is now expired
+    block = chain.mineBlock([
+      Tx.contractCall('data-guard', 'check-access', [
+        types.principal(deployer.address),
+        types.principal(user1.address)
+      ], deployer.address)
+    ]);
+    block.receipts[0].result.expectOk().expectBool(false);
   },
 });
