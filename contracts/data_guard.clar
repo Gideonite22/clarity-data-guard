@@ -6,6 +6,7 @@
 (define-constant err-already-granted (err u101))
 (define-constant err-no-permission (err u102))
 (define-constant err-invalid-data (err u103))
+(define-constant err-expired-access (err u104))
 
 ;; Data Maps
 (define-map data-store
@@ -20,7 +21,8 @@
     {owner: principal, accessor: principal}
     {
         granted: bool,
-        timestamp: uint
+        timestamp: uint,
+        expiry: (optional uint)
     }
 )
 
@@ -58,8 +60,8 @@
     )
 )
 
-;; Grant access to a principal
-(define-public (grant-access (to principal))
+;; Grant access to a principal with optional expiry
+(define-public (grant-access-with-expiry (to principal) (expiry (optional uint)))
     (let
         (
             (permission-key {owner: tx-sender, accessor: to})
@@ -71,13 +73,19 @@
                 permission-key
                 {
                     granted: true,
-                    timestamp: block-height
+                    timestamp: block-height,
+                    expiry: expiry
                 }
             )
             (add-access-history tx-sender to "" "GRANT")
             (ok true)
         )
     )
+)
+
+;; Grant permanent access (backward compatibility)
+(define-public (grant-access (to principal))
+    (grant-access-with-expiry to none)
 )
 
 ;; Revoke access
@@ -92,14 +100,23 @@
     )
 )
 
-;; Check access permission
+;; Check access permission with expiry validation
 (define-read-only (check-access (owner principal) (accessor principal))
     (let
         (
             (permission (map-get? access-permissions {owner: owner, accessor: accessor}))
         )
         (if (is-some permission)
-            (ok (get granted (unwrap-panic permission)))
+            (let
+                (
+                    (perm (unwrap-panic permission))
+                    (expiry-height (get expiry perm))
+                )
+                (if (and (is-some expiry-height) (> block-height (unwrap-panic expiry-height)))
+                    (ok false)
+                    (ok (get granted perm))
+                )
+            )
             (ok false)
         )
     )
@@ -133,4 +150,9 @@
 ;; Get access history
 (define-read-only (get-access-history (user principal))
     (ok (default-to (list ) (map-get? access-history user)))
+)
+
+;; Get access permission details
+(define-read-only (get-access-details (owner principal) (accessor principal))
+    (ok (map-get? access-permissions {owner: owner, accessor: accessor}))
 )
