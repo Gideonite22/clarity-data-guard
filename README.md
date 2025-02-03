@@ -10,6 +10,7 @@ A decentralized system for protecting sensitive data on the Stacks blockchain. D
 - Track access history
 - Data owner controls
 - Permission management system
+- Grant count limits per user (NEW)
 
 ## Getting Started
 
@@ -22,7 +23,7 @@ A decentralized system for protecting sensitive data on the Stacks blockchain. D
 
 ## Time-Limited Access Control
 
-The new time-limited access control feature allows data owners to grant temporary access to their data. When granting access, owners can specify an expiry block height after which the access will automatically expire.
+The time-limited access control feature allows data owners to grant temporary access to their data. When granting access, owners can specify an expiry block height after which the access will automatically expire.
 
 Example usage:
 ```clarity
@@ -31,3 +32,18 @@ Example usage:
 ```
 
 Use `check-access` to verify if access is still valid - it will return false if the permission has expired.
+
+## Grant Count Limits
+
+To prevent potential abuse and ensure responsible access management, each user is now limited to granting access to a maximum of 10 other users at any time. This limit applies to both permanent and time-limited access grants.
+
+The system automatically:
+- Tracks the number of active grants per user
+- Increments the count when granting access
+- Decrements the count when revoking access
+- Prevents new grants if the limit is reached
+
+You can check a user's current grant count using:
+```clarity
+(get-grant-count <user-principal>)
+```
