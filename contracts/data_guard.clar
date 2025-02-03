@@ -7,6 +7,8 @@
 (define-constant err-no-permission (err u102))
 (define-constant err-invalid-data (err u103))
 (define-constant err-expired-access (err u104))
+(define-constant err-max-grants-reached (err u105))
+(define-constant max-grants-per-user u10)
 
 ;; Data Maps
 (define-map data-store
@@ -34,6 +36,11 @@
         timestamp: uint,
         action: (string-ascii 10)
     })
+)
+
+(define-map grant-counts
+    principal
+    uint
 )
 
 ;; Public Functions
@@ -66,8 +73,10 @@
         (
             (permission-key {owner: tx-sender, accessor: to})
             (current-permission (map-get? access-permissions permission-key))
+            (current-grants (default-to u0 (map-get? grant-counts tx-sender)))
         )
         (asserts! (is-none current-permission) (err err-already-granted))
+        (asserts! (< current-grants max-grants-per-user) (err err-max-grants-reached))
         (begin
             (map-set access-permissions
                 permission-key
@@ -77,6 +86,7 @@
                     expiry: expiry
                 }
             )
+            (map-set grant-counts tx-sender (+ current-grants u1))
             (add-access-history tx-sender to "" "GRANT")
             (ok true)
         )
@@ -93,8 +103,10 @@
     (let
         (
             (permission-key {owner: tx-sender, accessor: from})
+            (current-grants (default-to u0 (map-get? grant-counts tx-sender)))
         )
         (map-delete access-permissions permission-key)
+        (map-set grant-counts tx-sender (- current-grants u1))
         (add-access-history tx-sender from "" "REVOKE")
         (ok true)
     )
@@ -120,6 +132,11 @@
             (ok false)
         )
     )
+)
+
+;; Get current grant count for a user
+(define-read-only (get-grant-count (user principal))
+    (ok (default-to u0 (map-get? grant-counts user)))
 )
 
 ;; Private Functions
