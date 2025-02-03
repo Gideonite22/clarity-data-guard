@@ -30,6 +30,14 @@ Clarinet.test({
     ]);
     block.receipts[0].result.expectOk().expectBool(true);
     
+    // Check grant count
+    block = chain.mineBlock([
+      Tx.contractCall('data-guard', 'get-grant-count', [
+        types.principal(deployer.address)
+      ], deployer.address)
+    ]);
+    block.receipts[0].result.expectOk().expectUint(1);
+    
     // Verify access permission
     block = chain.mineBlock([
       Tx.contractCall('data-guard', 'check-access', [
@@ -47,6 +55,14 @@ Clarinet.test({
     ]);
     block.receipts[0].result.expectOk().expectBool(true);
     
+    // Check grant count decreased
+    block = chain.mineBlock([
+      Tx.contractCall('data-guard', 'get-grant-count', [
+        types.principal(deployer.address)
+      ], deployer.address)
+    ]);
+    block.receipts[0].result.expectOk().expectUint(0);
+    
     // Verify access revoked
     block = chain.mineBlock([
       Tx.contractCall('data-guard', 'check-access', [
@@ -55,6 +71,35 @@ Clarinet.test({
       ], deployer.address)
     ]);
     block.receipts[0].result.expectOk().expectBool(false);
+  },
+});
+
+Clarinet.test({
+  name: "Test grant count limit",
+  async fn(chain: Chain, accounts: Map<string, Account>) {
+    const deployer = accounts.get('deployer')!;
+    let users = [];
+    for(let i = 1; i <= 11; i++) {
+      users.push(accounts.get(`wallet_${i}`)!);
+    }
+    
+    // Grant access to 10 users (should succeed)
+    for(let i = 0; i < 10; i++) {
+      let block = chain.mineBlock([
+        Tx.contractCall('data-guard', 'grant-access', [
+          types.principal(users[i].address)
+        ], deployer.address)
+      ]);
+      block.receipts[0].result.expectOk().expectBool(true);
+    }
+    
+    // Try to grant access to 11th user (should fail)
+    let block = chain.mineBlock([
+      Tx.contractCall('data-guard', 'grant-access', [
+        types.principal(users[10].address)
+      ], deployer.address)
+    ]);
+    block.receipts[0].result.expectErr(105);
   },
 });
 
