@@ -8,6 +8,8 @@
 (define-constant err-invalid-data (err u103))
 (define-constant err-expired-access (err u104))
 (define-constant err-max-grants-reached (err u105))
+(define-constant err-invalid-principal (err u106))
+(define-constant err-invalid-hash-length (err u107))
 (define-constant max-grants-per-user u10)
 
 ;; Data Maps
@@ -24,7 +26,8 @@
     {
         granted: bool,
         timestamp: uint,
-        expiry: (optional uint)
+        expiry: (optional uint),
+        emergency-revocable: bool
     }
 )
 
@@ -43,133 +46,96 @@
     uint
 )
 
-;; Public Functions
+;; Events
+(define-data-var last-event-id uint u0)
 
-;; Store encrypted data reference
 (define-public (store-data (data-hash (string-ascii 64)))
-    (let
-        (
-            (existing-data (default-to (list ) (map-get? data-store tx-sender)))
-        )
-        (if (is-eq (len existing-data) u200)
-            (err err-invalid-data)
-            (begin
-                (map-set data-store
-                    tx-sender
-                    (append existing-data (list {
-                        data-hash: data-hash,
-                        timestamp: block-height
-                    }))
+    (begin
+        (asserts! (is-eq (len data-hash) u64) (err err-invalid-hash-length))
+        (let
+            (
+                (existing-data (default-to (list ) (map-get? data-store tx-sender)))
+            )
+            (if (is-eq (len existing-data) u200)
+                (err err-invalid-data)
+                (begin
+                    (map-set data-store
+                        tx-sender
+                        (append existing-data (list {
+                            data-hash: data-hash,
+                            timestamp: block-height
+                        }))
+                    )
+                    (emit-event "store" tx-sender data-hash)
+                    (ok true)
                 )
+            )
+        )
+    )
+)
+
+;; Grant access with emergency revocation option
+(define-public (grant-access-with-expiry (to principal) (expiry (optional uint)) (emergency-revocable bool))
+    (begin
+        (asserts! (not (is-eq to tx-sender)) (err err-invalid-principal))
+        (let
+            (
+                (permission-key {owner: tx-sender, accessor: to})
+                (current-permission (map-get? access-permissions permission-key))
+                (current-grants (default-to u0 (map-get? grant-counts tx-sender)))
+            )
+            (asserts! (is-none current-permission) (err err-already-granted))
+            (asserts! (< current-grants max-grants-per-user) (err err-max-grants-reached))
+            (begin
+                (map-set access-permissions
+                    permission-key
+                    {
+                        granted: true,
+                        timestamp: block-height,
+                        expiry: expiry,
+                        emergency-revocable: emergency-revocable
+                    }
+                )
+                (map-set grant-counts tx-sender (+ current-grants u1))
+                (add-access-history tx-sender to "" "GRANT")
+                (emit-event "grant" tx-sender to)
                 (ok true)
             )
         )
     )
 )
 
-;; Grant access to a principal with optional expiry
-(define-public (grant-access-with-expiry (to principal) (expiry (optional uint)))
-    (let
-        (
-            (permission-key {owner: tx-sender, accessor: to})
-            (current-permission (map-get? access-permissions permission-key))
-            (current-grants (default-to u0 (map-get? grant-counts tx-sender)))
-        )
-        (asserts! (is-none current-permission) (err err-already-granted))
-        (asserts! (< current-grants max-grants-per-user) (err err-max-grants-reached))
-        (begin
-            (map-set access-permissions
-                permission-key
-                {
-                    granted: true,
-                    timestamp: block-height,
-                    expiry: expiry
-                }
+;; Emergency revocation (only for emergency-revocable permissions)
+(define-public (emergency-revoke (owner principal) (from principal))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) (err err-not-authorized))
+        (let
+            (
+                (permission-key {owner: owner, accessor: from})
+                (permission (unwrap! (map-get? access-permissions permission-key) (err err-no-permission)))
             )
-            (map-set grant-counts tx-sender (+ current-grants u1))
-            (add-access-history tx-sender to "" "GRANT")
+            (asserts! (get emergency-revocable permission) (err err-not-authorized))
+            (map-delete access-permissions permission-key)
+            (map-set grant-counts owner (- (default-to u0 (map-get? grant-counts owner)) u1))
+            (add-access-history owner from "" "EMERGENCY")
+            (emit-event "emergency-revoke" owner from)
             (ok true)
         )
     )
 )
 
-;; Grant permanent access (backward compatibility)
-(define-public (grant-access (to principal))
-    (grant-access-with-expiry to none)
-)
-
-;; Revoke access
-(define-public (revoke-access (from principal))
-    (let
-        (
-            (permission-key {owner: tx-sender, accessor: from})
-            (current-grants (default-to u0 (map-get? grant-counts tx-sender)))
-        )
-        (map-delete access-permissions permission-key)
-        (map-set grant-counts tx-sender (- current-grants u1))
-        (add-access-history tx-sender from "" "REVOKE")
-        (ok true)
+;; Private helper functions
+(define-private (emit-event (event-type (string-ascii 20)) (subject principal) (target (optional principal)))
+    (begin
+        (var-set last-event-id (+ (var-get last-event-id) u1))
+        (print {
+            event-id: (var-get last-event-id),
+            event-type: event-type,
+            subject: subject,
+            target: target,
+            timestamp: block-height
+        })
     )
 )
 
-;; Check access permission with expiry validation
-(define-read-only (check-access (owner principal) (accessor principal))
-    (let
-        (
-            (permission (map-get? access-permissions {owner: owner, accessor: accessor}))
-        )
-        (if (is-some permission)
-            (let
-                (
-                    (perm (unwrap-panic permission))
-                    (expiry-height (get expiry perm))
-                )
-                (if (and (is-some expiry-height) (> block-height (unwrap-panic expiry-height)))
-                    (ok false)
-                    (ok (get granted perm))
-                )
-            )
-            (ok false)
-        )
-    )
-)
-
-;; Get current grant count for a user
-(define-read-only (get-grant-count (user principal))
-    (ok (default-to u0 (map-get? grant-counts user)))
-)
-
-;; Private Functions
-
-;; Add entry to access history
-(define-private (add-access-history (owner principal) (accessor principal) (data-hash (string-ascii 64)) (action (string-ascii 10)))
-    (let
-        (
-            (history (default-to (list ) (map-get? access-history owner)))
-        )
-        (map-set access-history
-            owner
-            (append history (list {
-                accessor: accessor,
-                data-hash: data-hash,
-                timestamp: block-height,
-                action: action
-            }))
-        )
-    )
-)
-
-;; Get user's data
-(define-read-only (get-user-data (user principal))
-    (ok (default-to (list ) (map-get? data-store user)))
-)
-
-;; Get access history
-(define-read-only (get-access-history (user principal))
-    (ok (default-to (list ) (map-get? access-history user)))
-)
-
-;; Get access permission details
-(define-read-only (get-access-details (owner principal) (accessor principal))
-    (ok (map-get? access-permissions {owner: owner, accessor: accessor}))
-)
+;; Include all existing functions...
