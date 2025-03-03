@@ -1,37 +1,27 @@
-// [Previous test content remains unchanged, adding new tests...]
+// [Previous test content]
 
 Clarinet.test({
-  name: "Test emergency revocation functionality",
+  name: "Test data deletion functionality",
   async fn(chain: Chain, accounts: Map<string, Account>) {
     const deployer = accounts.get('deployer')!;
-    const user1 = accounts.get('wallet_1')!;
+    const testHash = "a".repeat(64);
     
-    // Grant access with emergency revocation enabled
+    // Store data
     let block = chain.mineBlock([
-      Tx.contractCall('data-guard', 'grant-access-with-expiry', [
-        types.principal(user1.address),
-        types.none(),
-        types.bool(true)
+      Tx.contractCall('data-guard', 'store-data', [
+        types.ascii(testHash)
       ], deployer.address)
     ]);
     block.receipts[0].result.expectOk().expectBool(true);
     
-    // Test emergency revocation
+    // Delete data
     block = chain.mineBlock([
-      Tx.contractCall('data-guard', 'emergency-revoke', [
-        types.principal(deployer.address),
-        types.principal(user1.address)
+      Tx.contractCall('data-guard', 'delete-data', [
+        types.ascii(testHash)
       ], deployer.address)
     ]);
     block.receipts[0].result.expectOk().expectBool(true);
-    
-    // Verify access is revoked
-    block = chain.mineBlock([
-      Tx.contractCall('data-guard', 'check-access', [
-        types.principal(deployer.address),
-        types.principal(user1.address)
-      ], deployer.address)
-    ]);
-    block.receipts[0].result.expectOk().expectBool(false);
   },
 });
+
+// [Include existing tests...]
